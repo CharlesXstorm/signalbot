@@ -1,0 +1,38 @@
+{
+  "name": "signalbot",
+  "version": "1.0.0",
+  "description": "a bot that read and execute signals",
+  "homepage": "https://github.com/CharlesXstorm/signalbot#readme",
+  "bugs": {
+    "url": "https://github.com/CharlesXstorm/signalbot/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CharlesXstorm/signalbot.git"
+  },
+  "license": "ISC",
+  "author": "charlesxstorm",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "tsc && tsc-alias",
+    "start": "node dist/index.js",
+    "dev": "nodemon"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.9",
+    "@types/node": "^22.15.18",
+    "@types/ws": "^8.18.1",
+    "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "inquirer": "^13.2.2",
+    "telegram": "^2.26.22",
+    "tsc-alias": "^1.8.16",
+    "ws": "^8.19.0"
+  }
+}

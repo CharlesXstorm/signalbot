@@ -1,1 +1,1 @@
-A bot that reads and executes signals
+A bot that read and execute signals
