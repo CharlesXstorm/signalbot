@@ -129,7 +129,8 @@ function parseSignal(text: string): TradeSignal | null {
     return {
         asset: `${pairMatch[1]}_otc`,
         direction: upperText.includes("CALL") || upperText.includes("BUY") ? "call" : "put",
-        duration: 5 // Defaulting to 5m, or extract via regex
+        duration: 5, // Defaulting to 5m, or extract via regex
+        triggerTime: null // Placeholder for future time-based signals
     };
 }
 

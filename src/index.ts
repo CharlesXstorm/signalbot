@@ -1,11 +1,13 @@
 import { TelegramClient, Api } from "telegram";
 import { StringSession } from "telegram/sessions";
-import { NewMessage } from "telegram/events";
-import { getPeerId } from "telegram/Utils";
 import inquirer from "inquirer";
 import WebSocket from "ws";
 import dotenv from "dotenv";
-import { TradeSignal } from "./types";
+import {
+  getMillisecondsUntilTrigger,
+  initPocketOption,
+  parseSignal,
+} from "./helpers";
 
 dotenv.config();
 
@@ -15,123 +17,120 @@ const session = process.env.TELEGRAM_SESSION_STRING || "";
 
 const stringSession = new StringSession(session); // Fill this once you have a permanent session
 
-async function syncTargetChannel(client: TelegramClient, targetId: string) {
-    try {
-        const entity = await client.getEntity(targetId);
-        console.log(`✅ Entity Synced: ${(entity as any).title || 'Private Channel'}`);
-    } catch (e) {
-        console.error("❌ Failed to sync channel. Verify the ID is correct and the account is a member.");
-    }
-}
+//initialize PO WebSocket connection on bot startup
+initPocketOption();
 
 (async () => {
-    const client = new TelegramClient(stringSession, apiId, apiHash, {
-        connectionRetries: 5,
-    });
+  const client = new TelegramClient(stringSession, apiId, apiHash, {
+    connectionRetries: 5,
+  });
 
-    // --- STEP 1: AUTHENTICATION WITH INQUIRER ---
-    await client.start({
-        phoneNumber: async () => {
-            const { phone } = await inquirer.prompt([{
-                type: 'input',
-                name: 'phone',
-                message: 'Enter your phone number (with country code):'
-            }]);
-            return phone;
+  // --- STEP 1: AUTHENTICATION WITH INQUIRER ---
+  await client.start({
+    phoneNumber: async () => {
+      const { phone } = await inquirer.prompt([
+        {
+          type: "input",
+          name: "phone",
+          message: "Enter your phone number (with country code):",
         },
-        phoneCode: async () => {
-            const { code } = await inquirer.prompt([{
-                type: 'input',
-                name: 'code',
-                message: 'Enter the code you received:'
-            }]);
-            return code;
+      ]);
+      return phone;
+    },
+    phoneCode: async () => {
+      const { code } = await inquirer.prompt([
+        {
+          type: "input",
+          name: "code",
+          message: "Enter the code you received:",
         },
-        password: async () => {
-            const { pw } = await inquirer.prompt([{
-                type: 'password',
-                name: 'pw',
-                message: 'Enter your 2FA password (if enabled):'
-            }]);
-            return pw;
+      ]);
+      return code;
+    },
+    password: async () => {
+      const { pw } = await inquirer.prompt([
+        {
+          type: "password",
+          name: "pw",
+          message: "Enter your 2FA password (if enabled):",
         },
-        onError: (err) => console.error("Telegram Login Error:", err),
-    });
+      ]);
+      return pw;
+    },
+    onError: (err) => console.error("Telegram Login Error:", err),
+  });
 
-    console.log("✅ Successfully logged into Telegram.");
-    console.log("Session String (Save this for later):", client.session.save());
+  console.log("✅ Successfully logged into Telegram.");
+  console.log("Session String (Save this for later):", client.session.save());
 
-    // This 'wakes up' the listener for channels you are in.
-    console.log("Fetching channels to initialize listener...");
-    await client.getDialogs({});
-    // const dialogs = await client.getDialogs({ limit: 200 });
+  // This 'wakes up' the listener for channels you are in.
+  console.log("Fetching channels to initialize listener...");
+  await client.getDialogs({ limit: 200 });
 
-    // --- STEP 2: SIGNAL LISTENER ---
-    // const TARGET_CHAT_ID = "-1002197451859"; // Replace with your group ID
-    ////////////////////
-    // await syncTargetChannel(client, TARGET_CHAT_ID);
+  //   //initialize PO WebSocket connection
+  //   initPocketOption();
 
-    const TARGET_CHAT_ID = -1002197451859;
+  // --- STEP 2: SIGNAL LISTENER ---
 
-    let lastMessageId: number | null = null;
+  const TARGET_CHAT_ID = -1002197451859;
 
-    setInterval(async () => {
+  let lastMessageId: number | null = null;
+
+  async function pollSignals() {
     try {
-        const msgs = await client.getMessages(2197451859, { limit: 1 });
+      const signals = await client.getMessages(TARGET_CHAT_ID, { limit: 1 });
 
-        if (!msgs.length) return;
+      if (signals.length > 0) {
+        const signal = signals[0];
 
-        const msg = msgs[0];
-
-        // first run: just initialize
         if (lastMessageId === null) {
-        lastMessageId = msg.id;
-        return;
-        }
+          lastMessageId = signal.id;
+        } else if (signal.id > lastMessageId) {
+          lastMessageId = signal.id;
+          console.log("🆕 NEW SIGNAL DETECTED:", signal.message);
 
-        // only act on NEW messages
-        if (msg.id > lastMessageId) {
-        lastMessageId = msg.id;
-        console.log("🆕 NEW SIGNAL:", msg.message);
+          // Execute Trade Immediately
+          const parsedSignal = parseSignal(signal.message);
+
+          if (parsedSignal && parsedSignal.triggerTime) {
+            const msToWait = getMillisecondsUntilTrigger(
+              parsedSignal.triggerTime,
+            );
+
+            if (msToWait < 0) {
+              console.log("⚠️ Signal time already passed. Skipping.");
+            } else {
+              console.log(
+                `📡 Signal Received. Execution in ${(msToWait / 1000).toFixed(1)}s`,
+              );
+
+              // Schedule the trade
+              setTimeout(() => {
+                console.log("signal executed!!", parsedSignal);
+                // executeTrade(parsedSignal);
+              }, msToWait);
+            }
+          }
         }
-    } catch (err) {
+      }
+    } catch (err: any) {
+      // If you hit a FloodWait, this catches it
+      if (err.errorMessage?.includes("FLOOD_WAIT")) {
+        const seconds = err.seconds || 30;
+        console.warn(`⚠️ Rate limited. Sleeping for ${seconds}s`);
+        await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+      } else {
         console.error("Polling error:", err);
+      }
+    } finally {
+      // Schedule the next check after 1 second
+      setTimeout(pollSignals, 1200);
     }
-    }, 1200);
+  }
 
-
-
-    // client.addEventHandler(async (event) => {
-    //     // console.log("New message event received:", event);
-    //     const signal = event.message;
-    //     const message = signal.message;
-    //     // // getPeerId converts the internal peer object to the "-100..." format
-    //     const chatId = getPeerId(signal.peerId);
-    //     console.log("Received message:", message, "from","chat ID", chatId);
-
-    //     if (chatId === TARGET_CHAT_ID) {
-    //         console.log(`📩 Signal Received: ${message}`);
-    //         // const signal = parseSignal(message);
-    //         // if (signal) executeTrade(signal);
-    //     }
-    // });
-
-    // }, new NewMessage({incoming: true}));
+  // Start polling
+  pollSignals();
 })();
-
-// --- STEP 3: PARSING LOGIC ---
-function parseSignal(text: string): TradeSignal | null {
-    const upperText = text.toUpperCase();
-    // Example Regex for: "EURUSD CALL 5M"
-    const pairMatch = upperText.match(/([A-Z]{6})/);
-    if (!pairMatch) return null;
-
-    return {
-        asset: `${pairMatch[1]}_otc`,
-        direction: upperText.includes("CALL") || upperText.includes("BUY") ? "call" : "put",
-        duration: 5 // Defaulting to 5m, or extract via regex
-    };
-}
 
 // --- STEP 4: POCKET OPTION EXECUTION ---
 // function executeTrade(signal: TradeSignal) {
@@ -151,7 +150,7 @@ function parseSignal(text: string): TradeSignal | null {
 //                 "time": signal.duration * 60
 //             }
 //         ];
-        
+
 //         ws.send(`42${JSON.stringify(payload)}`);
 //         console.log(`🚀 Trade Placed: ${signal.asset} | ${signal.direction}`);
 //     });
